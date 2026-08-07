@@ -1,66 +1,24 @@
-"""
-face_layer.py
-
-Face recognition using face_recognition (dlib 128-d embeddings).
-
-This replaces LBPH entirely. Instead of texture histograms, every face
-is converted into a 128-dimensional vector. Two faces are the same person
-if the Euclidean distance between their vectors is below a threshold.
-
-Key properties:
-  - One encoding per face image (128 floats)
-  - Comparison is a simple distance calculation — very fast
-  - Works well with as few as 5-10 training images per person
-  - Much more robust to lighting, angle, and partial occlusion than LBPH
-  - Fully offline, runs on CPU
-
-Threshold guide:
-  0.4  — very strict, almost no false positives, may miss same person
-  0.5  — strict, good for security use (recommended)
-  0.6  — moderate, more tolerant of angle/lighting variation
-  0.7+ — loose, not recommended for security
-
-It's either the person or it's not. No ambiguous middle ground.
-"""
-
 import os
 import cv2
 import numpy as np
 import face_recognition
 from db import NovaDB
 
-# ── Config ────────────────────────────────────────────────────────────────────
-
-FACE_MATCH_THRESHOLD = 0.5   # Euclidean distance cutoff
-                              # below this = same person
-                              # above this = unknown
-
-# How many model jitter passes when encoding (higher = more accurate, slower)
-# 1 is fast enough for real-time. Use 5+ for enrollment only.
+FACE_MATCH_THRESHOLD = 0.5
 ENCODING_JITTER_REALTIME = 1
-ENCODING_JITTER_ENROLL   = 5
-
-VIDEO_FRAME_SAMPLE_RATE  = 10   # extract every Nth frame from videos
-MIN_FACE_SIZE            = 40   # ignore faces smaller than this (pixels)
-
-
-# ── Encoding utilities ────────────────────────────────────────────────────────
+ENCODING_JITTER_ENROLL = 5
+VIDEO_FRAME_SAMPLE_RATE = 10
+MIN_FACE_SIZE = 40
 
 def encode_face_from_image(image_path: str,
-                            jitter: int = ENCODING_JITTER_ENROLL
-                            ) -> list[np.ndarray]:
-    """
-    Load an image file and return a list of face encodings found in it.
-    Most enrollment images will have exactly one face.
-    Returns empty list if no face is found.
-    """
+                           jitter: int = ENCODING_JITTER_ENROLL
+                           ) -> list[np.ndarray]:
     img = face_recognition.load_image_file(image_path)
     locations = face_recognition.face_locations(img, model="hog")
 
     if not locations:
         return []
 
-    # Filter out tiny faces (noise, background people)
     locations = [
         loc for loc in locations
         if (loc[2] - loc[0]) >= MIN_FACE_SIZE
@@ -70,22 +28,13 @@ def encode_face_from_image(image_path: str,
         return []
 
     encodings = face_recognition.face_encodings(img, locations,
-                                                 num_jitters=jitter)
+                                                num_jitters=jitter)
     return encodings
 
-
 def encode_face_from_frame(frame_bgr: np.ndarray,
-                            jitter: int = ENCODING_JITTER_REALTIME
-                            ) -> list[tuple[tuple, np.ndarray]]:
-    """
-    Encode all faces in a BGR OpenCV frame.
-    Returns list of (location, encoding) tuples.
-    location = (top, right, bottom, left) in pixels.
-    """
-    # face_recognition expects RGB
+                           jitter: int = ENCODING_JITTER_REALTIME
+                           ) -> list[tuple[tuple, np.ndarray]]:
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-    # Resize to 50% for faster detection, then scale locations back
     small = cv2.resize(rgb, (0, 0), fx=0.5, fy=0.5)
 
     locations = face_recognition.face_locations(small, model="hog")
@@ -98,9 +47,8 @@ def encode_face_from_frame(frame_bgr: np.ndarray,
         return []
 
     encodings = face_recognition.face_encodings(small, locations,
-                                                 num_jitters=jitter)
+                                                num_jitters=jitter)
 
-    # Scale locations back to full resolution
     scaled = []
     for (top, right, bottom, left), enc in zip(locations, encodings):
         scaled.append((
@@ -110,21 +58,15 @@ def encode_face_from_frame(frame_bgr: np.ndarray,
 
     return scaled
 
-
 def encode_faces_from_video(video_path: str,
-                              jitter: int = ENCODING_JITTER_ENROLL
-                              ) -> list[np.ndarray]:
-    """
-    Extract face encodings from a video file.
-    Samples every VIDEO_FRAME_SAMPLE_RATE-th frame.
-    Returns all encodings found (may be many per person).
-    """
+                            jitter: int = ENCODING_JITTER_ENROLL
+                            ) -> list[np.ndarray]:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"  [WARN] Cannot open video: {video_path}")
         return []
 
-    total     = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_idx = 0
     encodings = []
 
@@ -147,28 +89,17 @@ def encode_faces_from_video(video_path: str,
     print(f"  [VIDEO] Extracted {len(encodings)} face encoding(s).")
     return encodings
 
-
-# ── Enroll a person ───────────────────────────────────────────────────────────
-
 def enroll_person_faces(person_id: int, db: NovaDB,
-                         data_dir: str = "known_faces") -> int:
-    """
-    Scan known_faces/<person_folder>/ for images and videos.
-    Extract all face encodings and save them to the database.
-    Returns the number of encodings saved.
-
-    The folder name must match the person's first name (case-insensitive).
-    """
-    person   = db.get_person(person_id)
+                        data_dir: str = "known_faces") -> int:
+    person = db.get_person(person_id)
     if not person:
         print(f"[ERROR] No person with id={person_id}")
         return 0
 
     folder_name = person["first_name"].lower()
-    person_dir  = os.path.join(data_dir, folder_name)
+    person_dir = os.path.join(data_dir, folder_name)
 
     if not os.path.exists(person_dir):
-        # Try matching by scanning all folders
         for d in os.listdir(data_dir):
             if d.lower() == folder_name:
                 person_dir = os.path.join(data_dir, d)
@@ -177,9 +108,9 @@ def enroll_person_faces(person_id: int, db: NovaDB,
             print(f"[ERROR] Folder not found: {person_dir}")
             return 0
 
-    files       = os.listdir(person_dir)
-    img_exts    = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    vid_exts    = {".mp4", ".avi", ".mov", ".mkv"}
+    files = os.listdir(person_dir)
+    img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    vid_exts = {".mp4", ".avi", ".mov", ".mkv"}
 
     image_files = [f for f in files
                    if os.path.splitext(f)[1].lower() in img_exts]
@@ -191,22 +122,20 @@ def enroll_person_faces(person_id: int, db: NovaDB,
 
     all_encodings = []
 
-    # Images
     for img_name in image_files:
         img_path = os.path.join(person_dir, img_name)
-        found    = encode_face_from_image(img_path,
-                                           jitter=ENCODING_JITTER_ENROLL)
+        found = encode_face_from_image(img_path,
+                                       jitter=ENCODING_JITTER_ENROLL)
         if not found:
             print(f"  [WARN] No face in {img_name}")
             continue
         all_encodings.extend(found)
         print(f"  [OK] {img_name} → {len(found)} encoding(s)")
 
-    # Videos
     for vid_name in video_files:
         vid_path = os.path.join(person_dir, vid_name)
-        found    = encode_faces_from_video(vid_path,
-                                            jitter=ENCODING_JITTER_ENROLL)
+        found = encode_faces_from_video(vid_path,
+                                        jitter=ENCODING_JITTER_ENROLL)
         all_encodings.extend(found)
 
     if not all_encodings:
@@ -218,21 +147,9 @@ def enroll_person_faces(person_id: int, db: NovaDB,
     print(f"  [OK] {len(all_encodings)} total encoding(s) saved to DB.")
     return len(all_encodings)
 
-
 def enroll_person_faces_from_folder(person_id: int, db: NovaDB,
-                                     folder: str,
-                                     append: bool = False) -> int:
-    """
-    Like enroll_person_faces(), but scans the *exact* folder given —
-    no known_faces/<first_name>/ naming convention required. This is
-    what the web UI's path-based "Train" button calls: point it at any
-    folder on disk with photos/videos in it and it just works.
-
-    append=True adds to whatever face data this person already has
-    instead of replacing it.
-
-    Returns the number of encodings saved.
-    """
+                                    folder: str,
+                                    append: bool = False) -> int:
     person = db.get_person(person_id)
     if not person:
         print(f"[ERROR] No person with id={person_id}")
@@ -241,7 +158,7 @@ def enroll_person_faces_from_folder(person_id: int, db: NovaDB,
         print(f"[ERROR] Folder not found: {folder}")
         return 0
 
-    files    = os.listdir(folder)
+    files = os.listdir(folder)
     img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     vid_exts = {".mp4", ".avi", ".mov", ".mkv"}
 
@@ -256,7 +173,7 @@ def enroll_person_faces_from_folder(person_id: int, db: NovaDB,
     all_encodings = []
     for img_name in image_files:
         img_path = os.path.join(folder, img_name)
-        found    = encode_face_from_image(img_path, jitter=ENCODING_JITTER_ENROLL)
+        found = encode_face_from_image(img_path, jitter=ENCODING_JITTER_ENROLL)
         if not found:
             print(f"  [WARN] No face in {img_name}")
             continue
@@ -265,7 +182,7 @@ def enroll_person_faces_from_folder(person_id: int, db: NovaDB,
 
     for vid_name in video_files:
         vid_path = os.path.join(folder, vid_name)
-        found    = encode_faces_from_video(vid_path, jitter=ENCODING_JITTER_ENROLL)
+        found = encode_faces_from_video(vid_path, jitter=ENCODING_JITTER_ENROLL)
         all_encodings.extend(found)
 
     if not all_encodings:
@@ -281,57 +198,23 @@ def enroll_person_faces_from_folder(person_id: int, db: NovaDB,
     print(f"  [OK] {total} total encoding(s) saved to DB.")
     return total
 
-
-# ── Recognition ───────────────────────────────────────────────────────────────
-
 class FaceLayer:
-    """
-    Loaded once at startup. Holds all known encodings in memory
-    for fast comparison. Call .identify() on every frame.
-    """
-
     def __init__(self, db: NovaDB,
                  threshold: float = FACE_MATCH_THRESHOLD):
-        self.db        = db
+        self.db = db
         self.threshold = threshold
         self._known: list[tuple[int, str, np.ndarray]] = []
         self.reload()
 
     def reload(self):
-        """Reload all encodings from the database."""
         self._known = self.db.load_all_face_encodings()
         print(f"[FaceLayer] Loaded {len(self._known)} encoding(s) "
               f"for {len({p for p, _, _ in self._known})} person(s).")
 
-    # How close the runner-up (a *different* person's) distance needs to
-    # be to the winner's before we flag the match as ambiguous — worth
-    # a second look rather than confidently naming someone.
     AMBIGUITY_MARGIN = 0.08
 
     def identify(self, frame_bgr: np.ndarray
                  ) -> list[dict]:
-        """
-        Run face recognition on a frame.
-
-        Returns a list of results, one per face detected:
-        {
-            "person_id"       : int or None,
-            "name"            : str,           # "Joseph Wella" or "Unknown"
-            "confidence"      : float,         # 0.0 – 1.0 (1.0 = perfect match)
-            "distance"        : float,         # raw Euclidean distance
-            "location"        : (top,right,bottom,left),
-            "is_known"        : bool,
-            "runner_up_name"  : str or None,   # closest DIFFERENT enrolled
-                                                # person, if there is one —
-                                                # this is who the match was
-                                                # actually weighed against
-            "runner_up_conf"  : float or None,
-            "ambiguous"       : bool,          # runner-up was close enough
-                                                # to the winner to be a real
-                                                # question mark, not a
-                                                # clean call
-        }
-        """
         if not self._known:
             return []
 
@@ -340,20 +223,17 @@ class FaceLayer:
             return []
 
         known_encodings = [enc for _, _, enc in self._known]
-        results         = []
+        results = []
 
         for location, encoding in found:
             distances = face_recognition.face_distance(
                 known_encodings, encoding
             )
-            order     = np.argsort(distances)
-            best_idx  = int(order[0])
+            order = np.argsort(distances)
+            best_idx = int(order[0])
             best_dist = float(distances[best_idx])
-            best_pid  = self._known[best_idx][0]
+            best_pid = self._known[best_idx][0]
 
-            # Find the closest match that belongs to a DIFFERENT person —
-            # multiple encodings for the same person shouldn't count as
-            # their own runner-up.
             runner_up_name = None
             runner_up_dist = None
             for idx in order[1:]:
@@ -366,17 +246,17 @@ class FaceLayer:
 
             if best_dist <= self.threshold:
                 pid, name, _ = self._known[best_idx]
-                confidence   = round(1.0 - (best_dist / self.threshold), 3)
-                confidence   = max(0.0, min(1.0, confidence))
-                is_known     = True
+                confidence = round(1.0 - (best_dist / self.threshold), 3)
+                confidence = max(0.0, min(1.0, confidence))
+                is_known = True
             else:
-                pid        = None
-                name       = "Unknown"
+                pid = None
+                name = "Unknown"
                 confidence = 0.0
-                is_known   = False
+                is_known = False
 
             runner_up_conf = None
-            ambiguous      = False
+            ambiguous = False
             if runner_up_dist is not None:
                 runner_up_conf = round(
                     max(0.0, min(1.0, 1.0 - (runner_up_dist / self.threshold))), 3)
@@ -384,26 +264,22 @@ class FaceLayer:
                     ambiguous = True
 
             results.append({
-                "person_id"      : pid,
-                "name"           : name,
-                "confidence"     : confidence,
-                "distance"       : best_dist,
-                "location"       : location,   # (top, right, bottom, left)
-                "is_known"       : is_known,
-                "runner_up_name" : runner_up_name,
-                "runner_up_conf" : runner_up_conf,
-                "ambiguous"      : ambiguous,
+                "person_id": pid,
+                "name": name,
+                "confidence": confidence,
+                "distance": best_dist,
+                "location": location,
+                "is_known": is_known,
+                "runner_up_name": runner_up_name,
+                "runner_up_conf": runner_up_conf,
+                "ambiguous": ambiguous,
             })
 
         return results
 
     def location_to_box(self, location: tuple) -> tuple:
-        """Convert face_recognition (top,right,bottom,left) to cv2 (x,y,w,h)."""
         top, right, bottom, left = location
         return left, top, right - left, bottom - top
-
-
-# ── Standalone test ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
@@ -412,12 +288,10 @@ if __name__ == "__main__":
     db = NovaDB()
 
     if len(sys.argv) > 1 and sys.argv[1] == "enroll":
-        # python3 face_layer.py enroll <person_id>
         pid = int(sys.argv[2])
         enroll_person_faces(pid, db)
 
     else:
-        # Live webcam test
         print("[FaceLayer] Starting webcam test... press Q to quit.")
         layer = FaceLayer(db)
 
