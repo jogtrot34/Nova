@@ -1,23 +1,3 @@
-"""
-identify.py
-
-The verdict engine. Combines face, voice, and clothing layers into
-a single weighted composite score per tracked person, enforces the
-identity singularity rule, and produces a final Verdict object for
-the UI and brain.
-
-Weights:
-    Face        50%
-    Voice       35%
-    Clothing    15%
-
-Weights are redistributed if a layer has no result yet.
-
-Singularity rule:
-    One identity, one location. If two tracks claim the same person,
-    the lower-scoring one becomes Unknown and is flagged as a conflict.
-"""
-
 import cv2
 import time
 import threading
@@ -31,178 +11,88 @@ from voice_layer import VoiceLayer
 from clothing_layer import ClothingLayer
 from web.server import Verdict, OrbState, ALARM_TRIGGER_SECONDS
 
-
-# ── Weights ───────────────────────────────────────────────────────────────────
-
-WEIGHT_FACE     = 0.50
-WEIGHT_VOICE    = 0.35
+WEIGHT_FACE = 0.50
+WEIGHT_VOICE = 0.35
 WEIGHT_CLOTHING = 0.15
-
-# Minimum composite score to grant access
 ACCESS_THRESHOLD = 0.50
-
-# A face match can be "is_known" (within FaceLayer's raw distance
-# threshold) while still being a low-confidence borderline match —
-# FaceLayer's confidence score is "how close within the accepted
-# distance band", not an absolute quality score, so a bare pass
-# there does not mean the system should claim it recognises someone.
-# Below this bar, keep the raw score for the composite/voice-prompt
-# math, but don't assign a name from face alone.
 FACE_NAME_THRESHOLD = ACCESS_THRESHOLD
-
-# How long a track can go unseen before it is dropped (seconds)
 TRACK_TIMEOUT = 8.0
-
-# Frames between clothing zone samples
 CLOTHING_SAMPLE_INTERVAL = 5
-
-# Face confidence threshold below which voice prompt triggers
 VOICE_PROMPT_THRESHOLD = 0.50
-
-# Once someone is actually confirmed (decision == "granted"), assume
-# they're still around for this long even if the camera briefly loses
-# a clear view of them or momentarily can't tell them apart from
-# someone else — no re-prompting for voice/PIN every time they glance
-# away. Sliding window: renewed each time they're re-confirmed, not a
-# fixed 30 minutes from the first sighting.
-PRESENCE_COOLDOWN = 30 * 60   # seconds
-
-# A face or voice match too weak to auto-grant, but not nothing either,
-# gets offered a PIN instead of a flat denial. Below both of these
-# floors there's no real candidate to check a PIN against, so it's a
-# denial with no fallback.
-PIN_FACE_MIN  = 0.40
+PRESENCE_COOLDOWN = 30 * 60
+PIN_FACE_MIN = 0.40
 PIN_VOICE_MIN = 0.65
-
-
-# ── Track state ───────────────────────────────────────────────────────────────
 
 @dataclass
 class Track:
-    track_id:     int
-    person_id:    Optional[int]   = None
-    name:         str             = "Unknown"
-
-    # Layer scores (0.0 - 1.0)
-    face_conf:    float           = 0.0
-    voice_conf:   float           = 0.0
-    clothing_conf:float           = 0.0
-
-    # Who the system suspects, even below the naming threshold — kept
-    # so a PIN prompt or a presence-cooldown renewal has someone to
-    # check against, without claiming the identity outright.
+    track_id: int
+    person_id: Optional[int] = None
+    name: str = "Unknown"
+    face_conf: float = 0.0
+    voice_conf: float = 0.0
+    clothing_conf: float = 0.0
     candidate_person_id: Optional[int] = None
-    candidate_name:      str           = ""
-
-    # The closest DIFFERENT enrolled person, for "who was this actually
-    # weighed against" transparency, and whether that comparison was a
-    # close call worth a second look.
-    runner_up_name: str  = ""
-    ambiguous:      bool = False
-
-    # Set when face/voice signal points at someone but isn't strong
-    # enough to auto-grant — offers a PIN instead of a flat denial.
+    candidate_name: str = ""
+    runner_up_name: str = ""
+    ambiguous: bool = False
     pin_required: bool = False
-
-    # Meta
-    face_distance:float           = 1.0
-    beard_visible:bool            = False
-    gender:       str             = "unknown"
-    top_desc:     str             = "not visible"
-    bottom_desc:  str             = "not visible"
-    method:       str             = ""
-    conflict:     bool            = False
-    needs_voice:  bool            = False
-
-    # Composite
-    composite:    float           = 0.0
-    decision:     str             = "denied"
-    access:       str             = "none"
-
-    # Tracking
-    last_seen:    float           = field(default_factory=time.time)
-    frame_count:  int             = 0
-    location:     Optional[tuple] = None   # (top, right, bottom, left)
+    face_distance: float = 1.0
+    beard_visible: bool = False
+    gender: str = "unknown"
+    top_desc: str = "not visible"
+    bottom_desc: str = "not visible"
+    method: str = ""
+    conflict: bool = False
+    needs_voice: bool = False
+    composite: float = 0.0
+    decision: str = "denied"
+    access: str = "none"
+    last_seen: float = field(default_factory=time.time)
+    frame_count: int = 0
+    location: Optional[tuple] = None
 
     def to_verdict(self) -> Verdict:
         return Verdict(
-            track_id      = self.track_id,
-            name          = self.name,
-            person_id     = self.person_id,
-            face_conf     = self.face_conf,
-            voice_conf    = self.voice_conf,
-            combined_conf = self.composite,
-            method        = self.method,
-            access        = self.access,
-            decision      = self.decision,
-            top_desc      = self.top_desc,
-            bottom_desc   = self.bottom_desc,
-            gender        = self.gender,
-            conflict      = self.conflict,
-            needs_voice   = self.needs_voice,
-            pin_required        = self.pin_required,
-            candidate_person_id = self.candidate_person_id,
-            candidate_name      = self.candidate_name,
-            runner_up_name      = self.runner_up_name,
-            ambiguous           = self.ambiguous,
+            track_id=self.track_id,
+            name=self.name,
+            person_id=self.person_id,
+            face_conf=self.face_conf,
+            voice_conf=self.voice_conf,
+            combined_conf=self.composite,
+            method=self.method,
+            access=self.access,
+            decision=self.decision,
+            top_desc=self.top_desc,
+            bottom_desc=self.bottom_desc,
+            gender=self.gender,
+            conflict=self.conflict,
+            needs_voice=self.needs_voice,
+            pin_required=self.pin_required,
+            candidate_person_id=self.candidate_person_id,
+            candidate_name=self.candidate_name,
+            runner_up_name=self.runner_up_name,
+            ambiguous=self.ambiguous,
         )
 
-
-# ── Identify engine ───────────────────────────────────────────────────────────
-
 class IdentifyEngine:
-    """
-    Frame-by-frame identification engine.
-
-    Usage:
-        engine = IdentifyEngine(db, ui=nova_ui, brain=nova_brain)
-        engine.start()
-
-        while True:
-            ret, frame = cap.read()
-            verdicts = engine.process_frame(frame)
-    """
-
     def __init__(self, db: NovaDB,
                  ui=None,
                  brain=None,
                  voice_device: int = 1):
-        self.db      = db
-        self.ui      = ui
-        self.brain   = brain
-        self._lock   = threading.Lock()
-
-        # Layers
-        self._face     = FaceLayer(db)
-        self._voice    = VoiceLayer(db, on_voice_result=self._on_voice_result)
+        self.db = db
+        self.ui = ui
+        self.brain = brain
+        self._lock = threading.Lock()
+        self._face = FaceLayer(db)
+        self._voice = VoiceLayer(db, on_voice_result=self._on_voice_result)
         self._clothing = ClothingLayer(db)
-
-        # Track registry
-        self._tracks:  dict[int, Track] = {}
+        self._tracks: dict[int, Track] = {}
         self._next_tid = 1
-
-        # Frame counter for staggered sampling
         self._frame_count = 0
-
-        # Voice prompt cooldown per track
         self._voice_prompted: dict[int, float] = {}
-
-        # Alert cooldown for unknown entries
         self._alerted_tracks: set = set()
-
-        # Intruder alarm: timestamp the room first became "unknown
-        # only" (>=1 unrecognised person, zero recognised people) —
-        # None whenever that's not currently true.
         self._unknown_only_since: Optional[float] = None
-
-        # Once a person_id is actually confirmed (granted), assume
-        # they're still around for PRESENCE_COOLDOWN seconds — avoids
-        # re-running the full voice/PIN dance every time they glance
-        # away from camera for a moment.
-        # person_id -> {"name": str, "confirmed_at": float}
         self._presence: dict[int, dict] = {}
-
-    # ── Start / stop ──────────────────────────────────────────────────────────
 
     def start(self):
         self._voice.start()
@@ -212,16 +102,10 @@ class IdentifyEngine:
         self._voice.stop()
 
     def reload_people(self):
-        """Call this after a person is added, deleted, or (re-)enrolled
-        via the web UI so the live face/voice layers pick up the change
-        without needing a restart."""
         self._face.reload()
         self._voice.reload()
 
     def confirm_via_pin(self, track_id: int, person_id: int) -> bool:
-        """Called by the web UI after a correct PIN entry. Grants that
-        track as the given person immediately and seeds the presence
-        cooldown, so the next frame doesn't just ask for the PIN again."""
         with self._lock:
             track = self._tracks.get(track_id)
             if not track or track.candidate_person_id != person_id:
@@ -230,24 +114,17 @@ class IdentifyEngine:
             if not p:
                 return False
             now = time.time()
-            track.person_id    = person_id
-            track.name         = f"{p['first_name']} {p['last_name']}".strip()
-            track.access       = p.get("access_level", "none")
-            track.decision     = "granted" if track.access in ("full", "limited") else "denied"
+            track.person_id = person_id
+            track.name = f"{p['first_name']} {p['last_name']}".strip()
+            track.access = p.get("access_level", "none")
+            track.decision = "granted" if track.access in ("full", "limited") else "denied"
             track.pin_required = False
-            track.method       = (_method_string(track) + " + pin").strip(" +")
+            track.method = (_method_string(track) + " + pin").strip(" +")
             if track.decision == "granted":
                 self._presence[person_id] = {"name": track.name, "confirmed_at": now}
             return track.decision == "granted"
 
-    # ── Voice callback ────────────────────────────────────────────────────────
-
     def _on_voice_result(self, person_id, name, similarity, is_known):
-        """Called by VoiceLayer background thread when a result is ready."""
-        # Always surface it to the UI directly, independent of whatever
-        # face tracks exist right now — this is the fix for voice
-        # recognition being invisible in the dashboard when no face is
-        # currently tracked (bad angle, no camera, etc).
         if self.ui and hasattr(self.ui, "push_voice_status"):
             self.ui.push_voice_status(name, similarity, is_known)
 
@@ -255,13 +132,10 @@ class IdentifyEngine:
             attached = False
             for track in self._tracks.values():
                 if is_known:
-                    # Assign voice result to any track that currently
-                    # matches this person by face, or to unidentified tracks
                     if (track.person_id == person_id or
                             track.name == "Unknown"):
                         track.voice_conf = similarity
                         if track.person_id is None:
-                            # Voice-only identification
                             p = self.db.get_person(person_id)
                             if p:
                                 track.person_id = person_id
@@ -270,15 +144,9 @@ class IdentifyEngine:
                         attached = True
                         break
                 else:
-                    # Voice didn't match -- lower any existing voice confidence
                     if track.name == "Unknown":
                         track.voice_conf = 0.0
 
-            # No face track exists to attach this to at all — bad angle,
-            # face briefly lost, or no camera running. Don't just drop a
-            # confirmed voice match on the floor: stand up a voice-only
-            # track so it shows up as a real card in the dashboard
-            # immediately, not only as the topbar pill.
             if (is_known and not attached and
                     not any(t.person_id == person_id for t in self._tracks.values())):
                 p = self.db.get_person(person_id)
@@ -286,17 +154,17 @@ class IdentifyEngine:
                     tid = self._next_tid
                     self._next_tid += 1
                     track = Track(track_id=tid)
-                    track.person_id  = person_id
-                    track.name       = f"{p['first_name']} {p['last_name']}".strip()
+                    track.person_id = person_id
+                    track.name = f"{p['first_name']} {p['last_name']}".strip()
                     track.voice_conf = similarity
-                    track.method     = "voice"
-                    track.composite  = _composite(0.0, similarity, 0.0)
-                    track.access     = p.get("access_level", "none")
-                    track.decision   = ("granted"
-                                        if track.composite >= ACCESS_THRESHOLD
-                                        and track.access in ("full", "limited")
-                                        else "denied")
-                    track.last_seen  = time.time()
+                    track.method = "voice"
+                    track.composite = _composite(0.0, similarity, 0.0)
+                    track.access = p.get("access_level", "none")
+                    track.decision = ("granted"
+                                      if track.composite >= ACCESS_THRESHOLD
+                                      and track.access in ("full", "limited")
+                                      else "denied")
+                    track.last_seen = time.time()
                     self._tracks[tid] = track
                     if track.decision == "granted":
                         self._presence[person_id] = {
@@ -307,90 +175,65 @@ class IdentifyEngine:
                             "voice", "Voice-only identification",
                             f"{track.name} \u2014 no face track available")
 
-    # ── Main frame processing ─────────────────────────────────────────────────
-
     def process_frame(self, frame_bgr: np.ndarray) -> list[Verdict]:
         self._frame_count += 1
         now = time.time()
 
-        # ── Face recognition (every frame) ────────────────────────────────────
         face_results = self._face.identify(frame_bgr)
 
         with self._lock:
             matched_ids = set()
 
             for face_result in face_results:
-                loc  = face_result["location"]   # (top, right, bottom, left)
-                tid  = self._match_or_create_track(loc)
+                loc = face_result["location"]
+                tid = self._match_or_create_track(loc)
                 track = self._tracks[tid]
                 matched_ids.add(tid)
 
-                track.last_seen   = now
+                track.last_seen = now
                 track.frame_count += 1
-                track.location    = loc
+                track.location = loc
 
-                # Update face layer data. Always record who the system
-                # suspects (candidate) even below the naming threshold —
-                # a PIN prompt or presence-cooldown check needs someone
-                # to check against.
                 track.runner_up_name = face_result.get("runner_up_name") or ""
-                track.ambiguous      = bool(face_result.get("ambiguous"))
+                track.ambiguous = bool(face_result.get("ambiguous"))
 
                 if face_result["is_known"]:
                     track.candidate_person_id = face_result["person_id"]
-                    track.candidate_name      = face_result["name"]
+                    track.candidate_name = face_result["name"]
                 else:
                     track.candidate_person_id = None
-                    track.candidate_name      = ""
+                    track.candidate_name = ""
 
-                # Presence-cooldown shortcut: if we have a candidate and
-                # that specific person was actually confirmed recently,
-                # treat them as still-present without re-running the
-                # full confidence gate — a glance away shouldn't force
-                # them through voice/PIN again a minute later.
                 presence = (self._presence.get(track.candidate_person_id)
                             if track.candidate_person_id else None)
                 presence_valid = (presence is not None and
-                                   now - presence["confirmed_at"] < PRESENCE_COOLDOWN)
+                                  now - presence["confirmed_at"] < PRESENCE_COOLDOWN)
 
                 if presence_valid:
-                    track.face_conf  = max(face_result.get("confidence", 0.0),
-                                            track.face_conf)
-                    track.person_id  = track.candidate_person_id
-                    track.name       = presence["name"]
+                    track.face_conf = max(face_result.get("confidence", 0.0),
+                                          track.face_conf)
+                    track.person_id = track.candidate_person_id
+                    track.name = presence["name"]
                 elif face_result["is_known"] and \
                         face_result["confidence"] >= FACE_NAME_THRESHOLD:
-                    # Confident enough to claim this identity from face
-                    # alone.
-                    track.face_conf  = face_result["confidence"]
-                    track.person_id  = face_result["person_id"]
-                    track.name       = face_result["name"]
+                    track.face_conf = face_result["confidence"]
+                    track.person_id = face_result["person_id"]
+                    track.name = face_result["name"]
                 elif face_result["is_known"]:
-                    # Within FaceLayer's raw distance threshold, but too
-                    # close to the boundary to be confident. Keep the
-                    # score — the composite math and the voice-prompt
-                    # trigger both need it — without claiming an
-                    # identity from face alone. Voice or clothing can
-                    # still resolve who this is.
                     track.face_conf = face_result["confidence"]
                     if track.voice_conf < 0.50:
-                        track.name      = "Unknown"
+                        track.name = "Unknown"
                         track.person_id = None
                 else:
                     track.face_conf = 0.0
-                    # Don't erase an identity that voice already
-                    # confirmed just because this one frame's face
-                    # match was weak or absent (an occluded/turned face
-                    # shouldn't cause an otherwise-solid ID to flicker).
                     if track.voice_conf < 0.50:
-                        track.name      = "Unknown"
+                        track.name = "Unknown"
                         track.person_id = None
 
-                # ── Clothing (every Nth frame) ─────────────────────────────────
                 if self._frame_count % CLOTHING_SAMPLE_INTERVAL == 0:
                     x, y, w, h = self._face.location_to_box(loc)
                     zones = self._clothing.process(frame_bgr, (x, y, w, h))
-                    track.top_desc    = _zone_colour(zones, "torso")
+                    track.top_desc = _zone_colour(zones, "torso")
                     track.bottom_desc = _zone_colour(zones, "legs")
 
                     if track.person_id and track.face_conf >= 0.70:
@@ -404,19 +247,14 @@ class IdentifyEngine:
                         if pid and cscore >= 0.65:
                             p = self.db.get_person(pid)
                             if p:
-                                track.person_id    = pid
-                                track.name         = (f"{p['first_name']} "
-                                                      f"{p['last_name']}".strip())
-                                track.clothing_conf= cscore
-                                track.access       = p.get("access_level", "none")
+                                track.person_id = pid
+                                track.name = (f"{p['first_name']} "
+                                              f"{p['last_name']}".strip())
+                                track.clothing_conf = cscore
+                                track.access = p.get("access_level", "none")
 
-                # ── Voice confidence pass-through ──────────────────────────────
-                # VoiceLayer updates voice_conf via callback (_on_voice_result)
-                # Tell VoiceLayer the current face confidence so it knows
-                # whether to run or sleep
                 self._voice.set_face_confidence(track.face_conf)
 
-                # ── Voice prompt ───────────────────────────────────────────────
                 last_prompt = self._voice_prompted.get(tid, 0.0)
                 if (track.face_conf < VOICE_PROMPT_THRESHOLD and
                         track.voice_conf < 0.50 and
@@ -428,19 +266,17 @@ class IdentifyEngine:
                 else:
                     track.needs_voice = False
 
-                # ── Composite score ────────────────────────────────────────────
                 track.composite = _composite(
                     track.face_conf,
                     track.voice_conf,
                     track.clothing_conf,
                 )
 
-                # ── Access and method ──────────────────────────────────────────
                 if track.name != "Unknown" and track.composite >= ACCESS_THRESHOLD:
                     p = self.db.get_person_by_name(track.name.split()[0])
-                    track.access   = p["access_level"] if p else "none"
+                    track.access = p["access_level"] if p else "none"
                     track.decision = "granted" if track.access in ("full", "limited") else "denied"
-                    track.method   = _method_string(track)
+                    track.method = _method_string(track)
                     track.pin_required = False
                     if track.decision == "granted" and track.person_id:
                         self._presence[track.person_id] = {
@@ -448,20 +284,14 @@ class IdentifyEngine:
                         }
                 else:
                     track.decision = "denied"
-                    track.access   = "none"
-                    track.method   = "face" if track.face_conf > 0 else "unknown"
-                    # Not confident enough to auto-grant, but if there's
-                    # a specific candidate and either signal clears a
-                    # much lower bar, offer a PIN instead of a flat
-                    # denial. No candidate at all (a total stranger) —
-                    # straight denial, no PIN to fall back on.
+                    track.access = "none"
+                    track.method = "face" if track.face_conf > 0 else "unknown"
                     track.pin_required = bool(
                         track.candidate_person_id and
                         (track.face_conf > PIN_FACE_MIN or
                          track.voice_conf >= PIN_VOICE_MIN)
                     )
 
-            # ── Drop stale tracks ──────────────────────────────────────────────
             stale = [tid for tid, t in self._tracks.items()
                      if now - t.last_seen > TRACK_TIMEOUT
                      and tid not in matched_ids]
@@ -471,10 +301,8 @@ class IdentifyEngine:
                 self._alerted_tracks.discard(tid)
                 del self._tracks[tid]
 
-            # ── Singularity enforcement ────────────────────────────────────────
             _enforce_singularity(list(self._tracks.values()))
 
-            # ── Unknown person alerts ──────────────────────────────────────────
             for tid, track in self._tracks.items():
                 if track.name != "Unknown":
                     continue
@@ -484,19 +312,13 @@ class IdentifyEngine:
                     self._alerted_tracks.add(tid)
                     if self.brain:
                         self.brain.trigger_unknown_alert(tid, desc)
-                    # notification_settings' unknown_text_enabled mode —
-                    # texts emergency contact #1 once per sighting.
                     if self.ui and hasattr(self.ui, "notify_unknown_detected"):
                         self.ui.notify_unknown_detected(tid, desc)
-                # notification_settings' unknown_call_enabled mode — checked
-                # every frame so it can escalate to a call once this same
-                # stranger has stuck around past the configured threshold.
                 if (tid in self._alerted_tracks and self.ui and
                         hasattr(self.ui, "notify_unknown_persists")):
                     self.ui.notify_unknown_persists(tid, desc)
 
-            # ── Intruder alarm: unknown-only room, sustained ───────────────────
-            has_known   = any(t.name != "Unknown" for t in self._tracks.values())
+            has_known = any(t.name != "Unknown" for t in self._tracks.values())
             has_unknown = any(t.name == "Unknown" for t in self._tracks.values())
             alarm_active = False
             if has_unknown and not has_known:
@@ -511,17 +333,13 @@ class IdentifyEngine:
                 self._unknown_only_since = None
                 if self.ui and hasattr(self.ui, "clear_alarm"):
                     self.ui.clear_alarm()
-            # Even mid-siren, keep re-checking so alarm_active reflects
-            # whatever the UI actually settled on (e.g. still snoozed).
             if not alarm_active and self.ui and getattr(self.ui, "_alarm_active", False):
                 alarm_active = True
 
-            # ── Update brain observation ───────────────────────────────────────
             if self.brain:
                 self.brain.update_observation(
                     _build_observation(list(self._tracks.values())))
 
-            # ── Push to UI ─────────────────────────────────────────────────────
             verdicts = []
             for track in self._tracks.values():
                 v = track.to_verdict()
@@ -529,10 +347,9 @@ class IdentifyEngine:
                 if self.ui:
                     self.ui.push_verdict(v)
 
-            # Orb state — alarm wins over everything else
             if self.ui:
                 if alarm_active:
-                    pass   # trigger_alarm()/clear_alarm() already set status
+                    pass
                 elif any(t.conflict for t in self._tracks.values()):
                     self.ui.set_status("Identity conflict detected",
                                        OrbState.DENIED)
@@ -558,18 +375,12 @@ class IdentifyEngine:
 
             return verdicts
 
-    # ── Track matching ────────────────────────────────────────────────────────
-
     def _match_or_create_track(self, location: tuple) -> int:
-        """
-        Match a face location to an existing track by bounding box overlap,
-        or create a new track.
-        """
         top, right, bottom, left = location
         cx = (left + right) / 2
         cy = (top + bottom) / 2
 
-        best_tid  = None
+        best_tid = None
         best_dist = float("inf")
 
         for tid, track in self._tracks.items():
@@ -581,13 +392,11 @@ class IdentifyEngine:
             dist = ((cx - tx)**2 + (cy - ty)**2) ** 0.5
             if dist < best_dist:
                 best_dist = dist
-                best_tid  = tid
+                best_tid = tid
 
-        # Accept match if within 120 pixels
         if best_tid is not None and best_dist < 120:
             return best_tid
 
-        # New track
         tid = self._next_tid
         self._next_tid += 1
         self._tracks[tid] = Track(track_id=tid)
@@ -597,26 +406,23 @@ class IdentifyEngine:
 
         return tid
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _composite(face: float, voice: float, clothing: float) -> float:
-    """Weighted composite score, redistributing absent layers."""
     active = []
-    if face     > 0: active.append(("face",     face,     WEIGHT_FACE))
-    if voice    > 0: active.append(("voice",    voice,    WEIGHT_VOICE))
-    if clothing > 0: active.append(("clothing", clothing, WEIGHT_CLOTHING))
+    if face > 0:
+        active.append(("face", face, WEIGHT_FACE))
+    if voice > 0:
+        active.append(("voice", voice, WEIGHT_VOICE))
+    if clothing > 0:
+        active.append(("clothing", clothing, WEIGHT_CLOTHING))
 
     if not active:
         return 0.0
 
     total_w = sum(w for _, _, w in active)
-    score   = sum(v * w for _, v, w in active) / total_w
+    score = sum(v * w for _, v, w in active) / total_w
     return round(min(score, 1.0), 3)
 
-
 def _enforce_singularity(tracks: list[Track]):
-    """One identity, one location. Demote lower-scoring duplicate."""
     seen: dict[str, Track] = {}
     for track in tracks:
         if track.name in ("Unknown", ""):
@@ -624,27 +430,28 @@ def _enforce_singularity(tracks: list[Track]):
         if track.name in seen:
             existing = seen[track.name]
             if track.composite > existing.composite:
-                existing.name      = "Unknown"
-                existing.conflict  = True
-                existing.decision  = "denied"
+                existing.name = "Unknown"
+                existing.conflict = True
+                existing.decision = "denied"
                 existing.person_id = None
-                seen[track.name]   = track
+                seen[track.name] = track
             else:
-                track.name      = "Unknown"
-                track.conflict  = True
-                track.decision  = "denied"
+                track.name = "Unknown"
+                track.conflict = True
+                track.decision = "denied"
                 track.person_id = None
         else:
             seen[track.name] = track
 
-
 def _method_string(track: Track) -> str:
     parts = []
-    if track.face_conf     > 0: parts.append("face")
-    if track.voice_conf    > 0: parts.append("voice")
-    if track.clothing_conf > 0: parts.append("clothing")
+    if track.face_conf > 0:
+        parts.append("face")
+    if track.voice_conf > 0:
+        parts.append("voice")
+    if track.clothing_conf > 0:
+        parts.append("clothing")
     return " + ".join(parts) if parts else "unknown"
-
 
 def _zone_colour(zones: dict, zone_name: str) -> str:
     from clothing_layer import _dominant_colour
@@ -654,7 +461,6 @@ def _zone_colour(zones: dict, zone_name: str) -> str:
     return _dominant_colour(hist) + " " + {
         "torso": "top", "legs": "bottom", "shoes": "shoes"
     }.get(zone_name, zone_name)
-
 
 def _build_observation(tracks: list[Track]) -> str:
     if not tracks:
