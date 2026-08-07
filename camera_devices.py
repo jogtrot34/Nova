@@ -1,19 +1,5 @@
-"""
-camera_devices.py
-
-Same problem class as the mic issue, same fix: main.py assumed camera
-index 0 was always right and crashed the whole app (sys.exit(1)) if it
-wasn't. Some camera indices also "open" successfully per the driver
-and then never actually deliver a frame — this checks for a real
-frame, not just cv2.VideoCapture().isOpened().
-
-    python3 camera_devices.py            # scan indices 0-5, report which work
-    NOVA_CAMERA_INDEX=2 python3 main.py  # pin it explicitly, no code changes
-"""
-
 import os
 import time
-
 
 def _try_index(idx, warmup_frames=5, timeout=3.0):
     import cv2
@@ -33,10 +19,7 @@ def _try_index(idx, warmup_frames=5, timeout=3.0):
     cap.release()
     return got_frame
 
-
 def find_working_camera(max_index: int = 6):
-    """Returns a working camera index, or None if nothing on this
-    machine actually delivers a frame."""
     override = os.environ.get("NOVA_CAMERA_INDEX")
     if override is not None:
         try:
@@ -53,7 +36,6 @@ def find_working_camera(max_index: int = 6):
         if _try_index(idx):
             return idx
     return None
-
 
 if __name__ == "__main__":
     print("Scanning camera indices 0-5 (this can take a few seconds "
