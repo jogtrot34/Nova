@@ -12,7 +12,6 @@ try:
 except Exception:
     _SD_AVAILABLE = False
 
-
 def _modem_audio_device() -> Optional[int]:
     env = os.environ.get("NOVA_MODEM_AUDIO_DEVICE")
     if env is not None:
@@ -21,12 +20,11 @@ def _modem_audio_device() -> Optional[int]:
         except ValueError:
             print(f"[EmergencyDial] NOVA_MODEM_AUDIO_DEVICE={env!r} isn't "
                   f"a valid device index — using the system default output.")
-    return None   # None = sounddevice's current default output device
-
+    return None
 
 def _load_wav(path: str):
     with wave.open(path, "rb") as wf:
-        n  = wf.getnframes()
+        n = wf.getnframes()
         sr = wf.getframerate()
         sw = wf.getsampwidth()
         ch = wf.getnchannels()
@@ -38,13 +36,7 @@ def _load_wav(path: str):
         data = data.reshape(-1, ch)
     return data, sr
 
-
 class EmergencyDialer:
-    """Calls a number and, if answered, plays a pre-recorded WAV into
-    the call before hanging up. Degrades gracefully — if the modem
-    audio device isn't configured or found, the call still completes
-    and the outcome is still reported, it just won't play anything."""
-
     def __init__(self, port: Optional[str] = None):
         self.modem = SimpleModem()
         self._connected = False
@@ -55,36 +47,24 @@ class EmergencyDialer:
         return self._connected
 
     def call(self, number: str, timeout: int = 30) -> str:
-        """Returns 'answered' | 'denied' | 'busy' | 'no_response' | 'error'."""
         if not self._connected and not self.connect():
             return "error"
         return self.modem.make_call(number, timeout=timeout)
 
-    # Alias so EmergencyDialer is a drop-in for anything (like
-    # notifier.Notifier) that expects the raw SimpleModem/ModemController
-    # interface, which calls .make_call() rather than .call().
     def make_call(self, number: str, timeout: int = 30, **_ignored) -> str:
         return self.call(number, timeout=timeout)
 
     def call_and_play(self, number: str, wav_path: str,
-                       timeout: int = 30) -> dict:
-        """
-        Calls `number`; if answered, plays `wav_path` into the call
-        (once) before hanging up.
-
-        Returns:
-            {"status": "answered"|"denied"|"busy"|"no_response"|"error",
-             "played": bool, "error": str or None}
-        """
+                      timeout: int = 30) -> dict:
         result = {"status": None, "played": False, "error": None}
 
         if not self._connected and not self.connect():
             result["status"] = "error"
-            result["error"]  = "Could not connect to modem"
+            result["error"] = "Could not connect to modem"
             return result
 
         status = self.modem.make_call(number, timeout=timeout,
-                                       hangup_on_answer=False)
+                                      hangup_on_answer=False)
         result["status"] = status
 
         if status != "answered":
@@ -93,7 +73,7 @@ class EmergencyDialer:
         try:
             if not _SD_AVAILABLE:
                 result["error"] = ("call connected, but sounddevice isn't "
-                                    "available — nothing was played")
+                                   "available — nothing was played")
                 return result
             if not os.path.exists(wav_path):
                 result["error"] = f"Message file not found: {wav_path}"
@@ -122,7 +102,6 @@ class EmergencyDialer:
     def disconnect(self):
         self.modem.disconnect()
         self._connected = False
-
 
 if __name__ == "__main__":
     import argparse
