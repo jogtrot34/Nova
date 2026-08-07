@@ -1,23 +1,3 @@
-"""
-db.py
-
-Nova's single source of truth.
-
-All person data lives here — identity, face encodings, voiceprints,
-clothing memory, and access logs. Nothing is scattered across loose
-files except the raw training images (which stay in known_faces/).
-
-Tables:
-    people          — one row per registered person
-    clothing_memory — clothing observations linked to a person
-    access_log      — every identification event logged here
-
-Usage:
-    from db import NovaDB
-    db = NovaDB()
-    db.add_person("Joseph", "Wella", "owner", "full")
-"""
-
 import sqlite3
 import os
 import json
@@ -25,7 +5,6 @@ import numpy as np
 from datetime import datetime
 
 DB_PATH = "data/nova.db"
-
 
 class NovaDB:
 
@@ -75,17 +54,11 @@ class NovaDB:
                     notes           TEXT
                 );
             """)
-            # Migration: pin_hash didn't exist in earlier versions of
-            # this schema. ALTER TABLE ADD COLUMN is safe to retry —
-            # sqlite just errors "duplicate column" if it's already
-            # there, which we ignore.
             try:
                 conn.execute("ALTER TABLE people ADD COLUMN pin_hash TEXT")
             except sqlite3.OperationalError:
                 pass
         print(f"[DB] Ready at {self.db_path}")
-
-    # ── People ────────────────────────────────────────────────────────────────
 
     def add_person(self, first_name: str, last_name: str,
                    role: str = "visitor", access_level: str = "none",
@@ -111,7 +84,7 @@ class NovaDB:
         return dict(row) if row else None
 
     def get_person_by_name(self, first_name: str,
-                            last_name: str = "") -> dict | None:
+                           last_name: str = "") -> dict | None:
         with self._connect() as conn:
             if last_name:
                 row = conn.execute(
@@ -136,11 +109,11 @@ class NovaDB:
     def update_person(self, person_id: int, **kwargs):
         allowed = {"first_name", "last_name", "role",
                    "access_level", "notes"}
-        fields  = {k: v for k, v in kwargs.items() if k in allowed}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return
         set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values     = list(fields.values()) + [person_id]
+        values = list(fields.values()) + [person_id]
         with self._connect() as conn:
             conn.execute(
                 f"UPDATE people SET {set_clause} WHERE id = ?", values
@@ -155,12 +128,9 @@ class NovaDB:
                 "DELETE FROM people WHERE id = ?", (person_id,))
         print(f"[DB] Deleted person id={person_id} and their clothing memory.")
 
-    # ── PIN (fallback confirmation for borderline face/voice matches) ─────────
-
     def set_person_pin(self, person_id: int, pin: str):
-        """Stores a salted hash of the PIN — never the PIN itself."""
         import hashlib
-        salt   = os.urandom(16).hex()
+        salt = os.urandom(16).hex()
         digest = hashlib.pbkdf2_hmac(
             "sha256", pin.encode(), bytes.fromhex(salt), 100_000).hex()
         with self._connect() as conn:
@@ -189,10 +159,8 @@ class NovaDB:
                 "UPDATE people SET pin_hash = NULL WHERE id = ?",
                 (person_id,))
 
-    # ── Face encodings ────────────────────────────────────────────────────────
-
     def save_face_encodings(self, person_id: int,
-                             encodings: list[np.ndarray]):
+                            encodings: list[np.ndarray]):
         serialised = json.dumps([e.tolist() for e in encodings])
         with self._connect() as conn:
             conn.execute(
@@ -202,10 +170,7 @@ class NovaDB:
         print(f"[DB] Saved {len(encodings)} face encoding(s) for id={person_id}")
 
     def add_face_encodings(self, person_id: int,
-                            new_encodings: list[np.ndarray]) -> int:
-        """Append to whatever face encodings this person already has,
-        instead of overwriting them. Used by the web UI's 'capture
-        another sample' flow. Returns the new total count."""
+                           new_encodings: list[np.ndarray]) -> int:
         existing = self.load_face_encodings(person_id)
         combined = existing + list(new_encodings)
         self.save_face_encodings(person_id, combined)
@@ -223,14 +188,12 @@ class NovaDB:
         for p in people:
             if not p["face_encodings"]:
                 continue
-            name      = f"{p['first_name']} {p['last_name']}".strip()
+            name = f"{p['first_name']} {p['last_name']}".strip()
             encodings = [np.array(e)
                          for e in json.loads(p["face_encodings"])]
             for enc in encodings:
                 result.append((p["id"], name, enc))
         return result
-
-    # ── Voiceprint ────────────────────────────────────────────────────────────
 
     def save_voiceprint_path(self, person_id: int, path: str):
         with self._connect() as conn:
@@ -262,13 +225,11 @@ class NovaDB:
                 result.append((p["id"], name, vp))
         return result
 
-    # ── Clothing memory ───────────────────────────────────────────────────────
-
     def add_clothing_entry(self, person_id: int,
-                            torso_hist: np.ndarray,
-                            legs_hist:  np.ndarray,
-                            shoes_hist: np.ndarray | None = None,
-                            label: str = ""):
+                           torso_hist: np.ndarray,
+                           legs_hist: np.ndarray,
+                           shoes_hist: np.ndarray | None = None,
+                           label: str = ""):
         t = json.dumps(torso_hist.tolist())
         l = json.dumps(legs_hist.tolist())
         s = json.dumps(shoes_hist.tolist()) if shoes_hist is not None else None
@@ -281,7 +242,6 @@ class NovaDB:
                 (person_id, t, l, s, label)
             )
 
-        # Keep at most 40 entries per person
         with self._connect() as conn:
             conn.execute("""
                 DELETE FROM clothing_memory
@@ -306,14 +266,14 @@ class NovaDB:
         for row in rows:
             entries.append({
                 "torso_hist": np.array(json.loads(row["torso_hist"]),
-                                        dtype=np.float32),
-                "legs_hist":  np.array(json.loads(row["legs_hist"]),
-                                        dtype=np.float32),
+                                       dtype=np.float32),
+                "legs_hist": np.array(json.loads(row["legs_hist"]),
+                                      dtype=np.float32),
                 "shoes_hist": np.array(json.loads(row["shoes_hist"]),
-                                        dtype=np.float32)
+                                       dtype=np.float32)
                                if row["shoes_hist"] else None,
-                "label":      row["label"],
-                "recorded_at":row["recorded_at"],
+                "label": row["label"],
+                "recorded_at": row["recorded_at"],
             })
         return entries
 
@@ -321,13 +281,11 @@ class NovaDB:
         people = self.list_people()
         result = []
         for p in people:
-            name    = f"{p['first_name']} {p['last_name']}".strip()
+            name = f"{p['first_name']} {p['last_name']}".strip()
             entries = self.load_clothing_entries(p["id"])
             for entry in entries:
                 result.append((p["id"], name, entry))
         return result
-
-    # ── Access log ────────────────────────────────────────────────────────────
 
     def log_access(self, person_id: int | None,
                    method: str, confidence: float,
@@ -352,41 +310,32 @@ class NovaDB:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    # ── Utility ───────────────────────────────────────────────────────────────
-
     def reset_all(self):
-        """Wipes every person, clothing entry, and access log row.
-        Does NOT touch data/voiceprints/*.npy or known_faces/ — those
-        are files on disk, not DB rows. Use reset_nova.py to clear
-        everything (DB + those files) in one go."""
         with self._connect() as conn:
             conn.execute("DELETE FROM people")
             conn.execute("DELETE FROM clothing_memory")
             conn.execute("DELETE FROM access_log")
-            # also clear the optional contacts tables if contacts_db.py
-            # has been used against this same database file
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             if "emergency_contacts" in tables:
                 conn.execute("DELETE FROM emergency_contacts")
             if "person_contacts" in tables:
                 conn.execute("DELETE FROM person_contacts")
-            # restart auto-increment ids from 1
             conn.execute("DELETE FROM sqlite_sequence")
         print(f"[DB] Reset — {self.db_path} is now empty.")
 
     def summary(self):
         with self._connect() as conn:
-            n_people   = conn.execute(
+            n_people = conn.execute(
                 "SELECT COUNT(*) FROM people").fetchone()[0]
             n_clothing = conn.execute(
                 "SELECT COUNT(*) FROM clothing_memory").fetchone()[0]
-            n_logs     = conn.execute(
+            n_logs = conn.execute(
                 "SELECT COUNT(*) FROM access_log").fetchone()[0]
-            n_face     = conn.execute(
+            n_face = conn.execute(
                 "SELECT COUNT(*) FROM people "
                 "WHERE face_encodings IS NOT NULL").fetchone()[0]
-            n_voice    = conn.execute(
+            n_voice = conn.execute(
                 "SELECT COUNT(*) FROM people "
                 "WHERE voiceprint_path IS NOT NULL").fetchone()[0]
 
@@ -404,9 +353,6 @@ class NovaDB:
             print(f"  [{p['id']}] {p['first_name']} {p['last_name']}"
                   f" — {p['role']} ({p['access_level']} access)")
         print("=" * 45)
-
-
-# ── Standalone test / CLI ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse
