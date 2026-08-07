@@ -1,21 +1,3 @@
-"""
-reset_nova.py
-
-Wipes Nova completely: every person, clothing entry, and access log
-row in the database, every saved voiceprint (.npy) file, and —
-optionally — the known_faces/ photo and video folders too.
-
-    python3 reset_nova.py               # DB + voiceprints only
-    python3 reset_nova.py --with-photos # also deletes known_faces/*
-
-This is destructive and asks for confirmation before doing anything.
-For just clearing the database rows (leaving all your enrollment
-photos/videos/voice files untouched so you can re-run enrollment
-against them), use:
-
-    python3 db.py --reset
-"""
-
 import argparse
 import glob
 import os
@@ -23,7 +5,6 @@ import shutil
 
 from db import NovaDB, DB_PATH
 from voice_layer import VOICE_DIR
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -67,7 +48,6 @@ def main():
         print("[Reset] Cleared known_faces/")
 
     print("\n[Reset] Done. Nova is back to a clean slate.")
-
 
 if __name__ == "__main__":
     main()
