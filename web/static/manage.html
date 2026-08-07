@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nova — Manage People</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="scene manage-scene" id="scene" data-orb="idle">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" id="brandDot"></span>
+      <span class="brand-word">NOVA</span>
+      <span class="brand-sub">Manage People</span>
+    </div>
+    <a href="/" class="manage-link">
+      <svg viewBox="0 0 24 24" class="manage-link-ic"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2Z"/></svg>
+      Dashboard
+    </a>
+  </header>
+
+  <main class="manage-main">
+
+    <button class="btn-primary" id="addPersonBtn">+ Add Person</button>
+
+    <div class="add-person-form" id="addPersonForm" hidden>
+      <div class="form-row">
+        <input type="text" id="newFirstName" placeholder="First name">
+        <input type="text" id="newLastName" placeholder="Last name">
+      </div>
+      <div class="form-row">
+        <select id="newRole">
+          <option value="owner">Owner</option>
+          <option value="staff">Staff</option>
+          <option value="visitor" selected>Visitor</option>
+          <option value="guest">Guest</option>
+        </select>
+        <select id="newAccess">
+          <option value="full">Full access</option>
+          <option value="limited">Limited access</option>
+          <option value="none" selected>No access</option>
+        </select>
+      </div>
+      <input type="text" id="newNotes" placeholder="Notes — beard, height, anything useful (optional)" class="form-notes">
+      <div class="form-error" id="addPersonError" hidden></div>
+      <div class="form-actions">
+        <button class="btn-small" id="saveNewPerson">Save</button>
+        <button class="btn-small btn-ghost" id="cancelNewPerson">Cancel</button>
+      </div>
+    </div>
+
+    <div class="empty-row" id="manageEmpty">No one registered yet.</div>
+    <div id="manageList"></div>
+
+  </main>
+
+  <footer class="footnote">Nova AI Security System &middot; manage people</footer>
+</div>
+
+<script src="/static/manage.js"></script>
+</body>
+</html>

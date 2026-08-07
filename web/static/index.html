@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nova — Security Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="scene" id="scene" data-orb="idle">
+
+  <div class="alarm-flash" id="alarmFlash"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" id="brandDot"></span>
+      <span class="brand-word">NOVA</span>
+      <span class="brand-sub">Security Intelligence</span>
+    </div>
+    <div class="conn" id="connPill">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connText">Connecting…</span>
+    </div>
+    <div class="conn" id="voicePill" title="Live result from voice_layer.py's background thread — updates independently of face tracking">
+      <span class="conn-dot" id="voiceDot"></span>
+      <span id="voiceText">Voice: idle</span>
+    </div>
+    <a href="/manage" class="manage-link">
+      <svg viewBox="0 0 24 24" class="manage-link-ic"><path d="M15 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-6.5-1a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM15 14c-3.3 0-8 1.5-8 4.5V21h13.5c-.3-.8-.5-1.6-.5-2.5 0-2.5 2-4.5 4.5-4.5.4 0 .8 0 1.2.1C24.2 15.3 19.1 14 15 14ZM8.5 15c-3 0-6.5 1.3-6.5 4v2h5.5v-1.5c0-1.7.8-3.1 2-4.2-.3 0-.7-.3-1-.3Z"/></svg>
+      Manage People
+    </a>
+  </header>
+
+  <main class="hero">
+    <div class="hero-eyebrow" id="stateLabel">MONITORING</div>
+
+    <div class="wave-stage" id="waveStage">
+      <canvas id="waveCanvas"></canvas>
+    </div>
+
+    <p class="hero-status" id="statusText">Monitoring&hellip;</p>
+
+    <div class="prompt-pill" id="promptPill">
+      <svg viewBox="0 0 24 24" class="mic-ic"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg>
+      <span id="promptText">Say &ldquo;Nova&rdquo; to wake me</span>
+    </div>
+
+    <button class="btn-small btn-danger-block" id="silenceAlarmBtn" hidden style="margin-top:14px;">
+      Silence Alarm
+    </button>
+  </main>
+
+  <section class="panels" id="panels">
+
+    <article class="panel" data-panel="people">
+      <button class="panel-head" data-toggle="people">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3Zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5Zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5Z"/></svg>
+          <span class="panel-title">Detected People</span>
+          <span class="panel-badge" id="peopleBadge">0</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="peopleBody">
+        <div class="panel-body-inner">
+          <div class="empty-row" id="peopleEmpty">No one detected right now.</div>
+          <div id="peopleList"></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="status">
+      <button class="panel-head" data-toggle="status">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M12 2 4 5v6c0 5.25 3.6 10.16 8 11.32 4.4-1.16 8-6.07 8-11.32V5l-8-3Z"/></svg>
+          <span class="panel-title">System Status</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="statusBody">
+        <div class="panel-body-inner">
+          <ul class="status-list" id="statusList"></ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="controls">
+      <button class="panel-head" data-toggle="controls">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M3 17v2h6v-2H3ZM3 5v2h10V5H3Zm10 16v-2h8v-2h-8v-2h-2v6h2ZM7 9v2H3v2h4v2h2V9H7Zm14 4v-2H11v2h10Zm-6-4h2V7h4V5h-4V3h-2v6Z"/></svg>
+          <span class="panel-title">Controls</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="controlsBody">
+        <div class="panel-body-inner">
+
+          <div class="control-block">
+            <div class="control-label">
+              <span class="modem-dot" id="modemDot"></span>
+              Modem — <span id="modemStatusText">checking\u2026</span>
+            </div>
+            <div class="train-row">
+              <input type="text" id="modemPortInput" class="train-path-input"
+                     placeholder="Port, e.g. /dev/ttyACM0 (blank = auto-detect)">
+            </div>
+            <div class="train-row">
+              <button class="btn-small" id="modemConnectBtn">Connect</button>
+              <button class="btn-small btn-ghost" id="modemDisconnectBtn">Disconnect</button>
+              <span class="enroll-status" id="modemActionStatus"></span>
+            </div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label">Emergency Alert</div>
+            <div class="train-row">
+              <input type="text" id="alertMessageInput" class="train-path-input"
+                     placeholder="Alert message" value="Unknown person triggered a security alert.">
+            </div>
+            <div class="train-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="alertSimulateCheck" checked>
+                Simulate only (don't actually send)
+              </label>
+            </div>
+            <div class="train-row">
+              <button class="btn-small btn-train" id="sendAlertBtn">Send Alert</button>
+              <span class="enroll-status" id="alertActionStatus"></span>
+            </div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label">Notification Modes</div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Text me identification logs</div>
+                <div class="toggle-sub">Every N minutes, only if anyone was identified</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleDigest">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+            <div class="digest-interval-row">
+              <span class="toggle-sub">Every</span>
+              <input type="number" min="1" max="180" value="10" id="digestIntervalInput" class="train-path-input">
+              <span class="toggle-sub">minutes</span>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Text me on unknown person</div>
+                <div class="toggle-sub">The moment someone unrecognised is detected</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleUnknownText">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Call me on unknown person</div>
+                <div class="toggle-sub">If they're still there a little while later</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleUnknownCall">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+            <span class="enroll-status" id="notifSettingsStatus"></span>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label">Shutdown</div>
+            <button class="btn-small btn-danger-block" id="shutdownBtn">Shut Down Nova</button>
+          </div>
+
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="contacts">
+      <button class="panel-head" data-toggle="contacts">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M6.6 10.8c1.4 2.7 3.6 4.9 6.3 6.3l2.1-2.1c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.5.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.6c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.5.1.4 0 .8-.2 1.1l-2.1 2.1Z"/></svg>
+          <span class="panel-title">Emergency Contacts</span>
+          <span class="panel-badge" id="contactsBadge">0</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="contactsBody">
+        <div class="panel-body-inner">
+          <div class="empty-row" id="contactsEmpty">No emergency contacts yet.</div>
+          <div id="contactsList"></div>
+
+          <div class="control-block" style="margin-top:12px;">
+            <div class="control-label">Add Contact</div>
+            <div class="train-row">
+              <input type="text" id="newContactName" class="train-path-input" placeholder="Name">
+              <input type="text" id="newContactPhone" class="train-path-input" placeholder="Phone, e.g. +265998xxxxxx">
+            </div>
+            <div class="train-row">
+              <input type="text" id="newContactRole" class="train-path-input" placeholder="Role (optional, e.g. security)">
+              <input type="number" id="newContactPriority" class="train-path-input" placeholder="Priority" value="1" min="1" style="max-width:90px;">
+            </div>
+            <div class="train-row">
+              <button class="btn-small btn-train" id="addContactBtn">Add Contact</button>
+              <span class="enroll-status" id="addContactStatus"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="events">
+      <button class="panel-head" data-toggle="events">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z"/></svg>
+          <span class="panel-title">System Events</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="eventsBody">
+        <div class="panel-body-inner">
+          <div class="empty-row" id="eventsEmpty">No events yet.</div>
+          <div id="eventsList"></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="confidence">
+      <button class="panel-head" data-toggle="confidence">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M5 21V10h4v11H5Zm10 0V3h4v18h-4Zm-5 0v-7h4v7h-4Z"/></svg>
+          <span class="panel-title">Identity Confidence</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="confidenceBody">
+        <div class="panel-body-inner">
+          <div class="empty-row" id="confEmpty">Waiting for a tracked person&hellip;</div>
+          <div class="rings-row" id="ringsRow" hidden>
+            <div class="ring" id="ringFace" style="--pct:0"><span class="ring-label">Face</span><span class="ring-val">0%</span></div>
+            <div class="ring" id="ringVoice" style="--pct:0"><span class="ring-label">Voice</span><span class="ring-val">0%</span></div>
+            <div class="ring" id="ringCombined" style="--pct:0"><span class="ring-label">Combined</span><span class="ring-val">0%</span></div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel" data-panel="camera">
+      <button class="panel-head" data-toggle="camera">
+        <span class="panel-head-left">
+          <svg viewBox="0 0 24 24" class="panel-ic"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>
+          <span class="panel-title">Camera Feed</span>
+          <span class="live-dot" id="liveDot">LIVE</span>
+        </span>
+        <svg viewBox="0 0 24 24" class="chevron"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      <div class="panel-body" id="cameraBody">
+        <div class="panel-body-inner">
+          <div class="camera-frame">
+            <img id="cameraImg" alt="Live camera feed" src="/api/stream">
+            <div class="camera-fallback" id="cameraFallback">No camera signal</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+  </section>
+
+  <footer class="footnote">Nova AI Security System &middot; final year project</footer>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
