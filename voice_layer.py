@@ -9,23 +9,20 @@ configure_audio_device()
 from resemblyzer import VoiceEncoder, preprocess_wav
 from db import NovaDB
 
-# ── Config ────────────────────────────────────────────────────────────────────
-
-SAMPLE_RATE          = 44100   # ALC236 native rate, Resemblyzer resamples internally
-RECORD_SECONDS       = 4
-ENROLL_SAMPLES       = 15
+SAMPLE_RATE = 44100
+RECORD_SECONDS = 4
+ENROLL_SAMPLES = 15
 SIMILARITY_THRESHOLD = 0.80
-VOICE_DIR            = "data/voiceprints"
+VOICE_DIR = "data/voiceprints"
 
 INTERVAL_MID_CONF = 5.0
 INTERVAL_LOW_CONF = 0.0
-INTERVAL_NO_FACE  = 3.0
+INTERVAL_NO_FACE = 3.0
 
 FACE_HIGH = 0.80
-FACE_LOW  = 0.50
+FACE_LOW = 0.50
 
 _encoder = None
-
 
 def get_encoder() -> VoiceEncoder:
     global _encoder
@@ -35,22 +32,9 @@ def get_encoder() -> VoiceEncoder:
         print("[VoiceLayer] Encoder ready.")
     return _encoder
 
-
-# ── Audio utilities ───────────────────────────────────────────────────────────
-
 def record_audio(seconds: float = RECORD_SECONDS,
                  samplerate: int = SAMPLE_RATE,
                  timeout_margin: float = 5.0) -> np.ndarray:
-    """
-    Records `seconds` of audio from the current input device.
-
-    Uses a callback-based stream with a hard wall-clock timeout instead
-    of sd.rec()+sd.wait(), which can block forever if a stream opens
-    successfully but never actually delivers data (wrong device picked,
-    something else holding the mic, a permissions prompt sitting
-    unanswered, etc). That failure mode looks identical to "still
-    recording" from the outside — this makes it fail loudly instead.
-    """
     n_frames = int(seconds * samplerate)
     buffer = np.zeros(n_frames, dtype="float32")
     frames_written = 0
@@ -69,7 +53,7 @@ def record_audio(seconds: float = RECORD_SECONDS,
 
     try:
         stream = sd.InputStream(samplerate=samplerate, channels=1,
-                                 dtype="float32", callback=callback)
+                                dtype="float32", callback=callback)
         with stream:
             finished = done.wait(timeout=seconds + timeout_margin)
     except sd.PortAudioError as e:
@@ -94,17 +78,14 @@ def record_audio(seconds: float = RECORD_SECONDS,
 
     return buffer
 
-
 def is_speech(audio: np.ndarray, threshold: float = 0.008) -> bool:
-    """Return True if audio contains speech (RMS above threshold)."""
     rms = float(np.sqrt(np.mean(audio ** 2)))
     return rms > threshold
-
 
 def embed_audio(audio: np.ndarray,
                 samplerate: int = SAMPLE_RATE):
     if not is_speech(audio):
-        return None   # silence — skip embedding
+        return None
     try:
         wav = preprocess_wav(audio, source_sr=samplerate)
         if len(wav) < samplerate * 0.5:
@@ -114,24 +95,20 @@ def embed_audio(audio: np.ndarray,
         print(f"[VoiceLayer][WARN] Embedding failed: {e}")
         return None
 
-
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     denom = np.linalg.norm(a) * np.linalg.norm(b)
     if denom == 0:
         return 0.0
     return float(np.dot(a, b) / denom)
 
-
-# ── Enrollment ────────────────────────────────────────────────────────────────
-
 def enroll_person_voice(person_id: int, db: NovaDB,
-                         n_samples: int = ENROLL_SAMPLES) -> bool:
+                        n_samples: int = ENROLL_SAMPLES) -> bool:
     person = db.get_person(person_id)
     if not person:
         print(f"[VoiceLayer][ERROR] No person with id={person_id}")
         return False
 
-    name      = f"{person['first_name']} {person['last_name']}".strip()
+    name = f"{person['first_name']} {person['last_name']}".strip()
     safe_name = person["first_name"].lower()
 
     print(f"\n[VOICE ENROLL] {name}")
@@ -146,7 +123,7 @@ def enroll_person_voice(person_id: int, db: NovaDB,
         input(f"  Press Enter for sample {i}/{n_samples}, then speak...")
         print(f"  Recording {RECORD_SECONDS}s — speak now...")
         audio = record_audio()
-        emb   = embed_audio(audio)
+        emb = embed_audio(audio)
         if emb is None:
             print("  [WARN] Could not embed — too quiet? Retrying.")
             continue
@@ -154,8 +131,6 @@ def enroll_person_voice(person_id: int, db: NovaDB,
         print(f"  [OK] Sample {i} captured.\n")
         i += 1
 
-    # Store all individual embeddings — shape (n_samples, 256)
-    # Matching compares against each one and takes the best score
     embeddings_array = np.stack(embeddings)
     save_path = os.path.join(VOICE_DIR, f"{safe_name}_{person_id}.npy")
     np.save(save_path, embeddings_array)
@@ -163,27 +138,11 @@ def enroll_person_voice(person_id: int, db: NovaDB,
     print(f"[VOICE ENROLL] Done. {len(embeddings)} embeddings saved -> {save_path}")
     return True
 
-
-# Extensions recognised when scanning a folder for pre-recorded voice samples
 AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
 
-
 def enroll_person_voice_from_folder(person_id: int, db: NovaDB,
-                                     folder: str,
-                                     append: bool = False) -> int:
-    """
-    Bulk voice enrollment from a folder of pre-recorded audio files —
-    no live mic recording, no per-sample prompts. Point it at a folder
-    with as many voice samples as you've got (different sentences,
-    sessions, moods — more variety makes a more robust voiceprint) and
-    it embeds every one it can read.
-
-    append=True adds to whatever voiceprint this person already has
-    instead of replacing it — useful for topping up an existing
-    enrollment with a fresh batch of recordings.
-
-    Returns the number of samples successfully embedded and saved.
-    """
+                                    folder: str,
+                                    append: bool = False) -> int:
     person = db.get_person(person_id)
     if not person:
         print(f"[VoiceLayer][ERROR] No person with id={person_id}")
@@ -210,10 +169,8 @@ def enroll_person_voice_from_folder(person_id: int, db: NovaDB,
     for fname in files:
         path = os.path.join(folder, fname)
         try:
-            # preprocess_wav accepts a file path directly — it loads
-            # and resamples internally, no need to read the file first
             wav = preprocess_wav(path)
-            if len(wav) < 8000:   # < 0.5s at resemblyzer's 16kHz
+            if len(wav) < 8000:
                 print(f"  [WARN] {fname} too short — skipped")
                 continue
             emb = get_encoder().embed_utterance(wav)
@@ -244,37 +201,34 @@ def enroll_person_voice_from_folder(person_id: int, db: NovaDB,
           f"embedding(s) saved -> {save_path}")
     return len(embeddings)
 
-
-# ── Shared result state ───────────────────────────────────────────────────────
-
 class VoiceResult:
     def __init__(self):
-        self._lock       = threading.Lock()
-        self._person_id  = None
-        self._name       = "Unknown"
+        self._lock = threading.Lock()
+        self._person_id = None
+        self._name = "Unknown"
         self._similarity = 0.0
-        self._is_known   = False
-        self._timestamp  = 0.0
-        self._fresh      = False
+        self._is_known = False
+        self._timestamp = 0.0
+        self._fresh = False
 
     def update(self, person_id, name, similarity, is_known):
         with self._lock:
-            self._person_id  = person_id
-            self._name       = name
+            self._person_id = person_id
+            self._name = name
             self._similarity = similarity
-            self._is_known   = is_known
-            self._timestamp  = time.time()
-            self._fresh      = True
+            self._is_known = is_known
+            self._timestamp = time.time()
+            self._fresh = True
 
     def read(self) -> dict:
         with self._lock:
             self._fresh = False
             return {
-                "person_id"  : self._person_id,
-                "name"       : self._name,
-                "similarity" : self._similarity,
-                "is_known"   : self._is_known,
-                "timestamp"  : self._timestamp,
+                "person_id": self._person_id,
+                "name": self._name,
+                "similarity": self._similarity,
+                "is_known": self._is_known,
+                "timestamp": self._timestamp,
                 "age_seconds": time.time() - self._timestamp,
             }
 
@@ -286,30 +240,19 @@ class VoiceResult:
         with self._lock:
             return time.time() - self._timestamp
 
-
-# ── Voice layer ───────────────────────────────────────────────────────────────
-
 class VoiceLayer:
-    """
-    Runs voice identification on a background thread.
-
-    Stores all enrollment embeddings individually and takes the
-    best match score across all of them — better than averaging
-    because it preserves the natural range of the person's voice.
-    """
-
     def __init__(self, db: NovaDB,
                  threshold: float = SIMILARITY_THRESHOLD,
                  on_voice_result=None):
-        self.db                  = db
-        self.threshold           = threshold
+        self.db = db
+        self.threshold = threshold
         self._on_voice_result_cb = on_voice_result
-        self.result              = VoiceResult()
-        self._known              = []
-        self._face_confidence    = 0.0
-        self._face_lock          = threading.Lock()
-        self._running            = False
-        self._thread             = None
+        self.result = VoiceResult()
+        self._known = []
+        self._face_confidence = 0.0
+        self._face_lock = threading.Lock()
+        self._running = False
+        self._thread = None
         self.reload()
 
     def reload(self):
@@ -321,12 +264,6 @@ class VoiceLayer:
         print(f"[VoiceLayer] Loaded {len(self._known)} person(s), "
               f"{total} total embedding(s).")
 
-        # If Nova started with zero enrolled voices, start() bailed out
-        # without ever spawning the background thread. Someone enrolling
-        # a voice later — via the CLI or the web UI's "Enroll Voice"
-        # button — must not need a full restart to actually turn voice
-        # identification on. If there's data now and we're not already
-        # running, (re)start.
         if self._known and not self._running:
             self.start()
 
@@ -354,26 +291,24 @@ class VoiceLayer:
         if emb is None:
             return
 
-        best_id   = None
+        best_id = None
         best_name = "Unknown"
-        best_sim  = 0.0
+        best_sim = 0.0
 
         for pid, name, vp in self._known:
-            # Handle both old (256,) and new (N, 256) shapes
             if vp.ndim == 1:
                 vp = vp[np.newaxis, :]
 
-            # Compare against every stored embedding, take best score
             for stored_emb in vp:
                 sim = cosine_similarity(emb, stored_emb)
                 if sim > best_sim:
-                    best_sim  = sim
-                    best_id   = pid
+                    best_sim = sim
+                    best_id = pid
                     best_name = name
 
         is_known = best_sim >= self.threshold
         if not is_known:
-            best_id   = None
+            best_id = None
             best_name = "Unknown"
 
         self.result.update(best_id, best_name, best_sim, is_known)
@@ -383,7 +318,7 @@ class VoiceLayer:
         if self._on_voice_result_cb:
             try:
                 self._on_voice_result_cb(best_id, best_name,
-                                          best_sim, is_known)
+                                         best_sim, is_known)
             except Exception as e:
                 print(f"[VoiceLayer] Callback error: {e}")
 
@@ -416,9 +351,9 @@ class VoiceLayer:
             print("[VoiceLayer][WARN] No voiceprints loaded — voice layer inactive.")
             return
         if self._running:
-            return   # already running — don't spawn a second thread
+            return
         self._running = True
-        self._thread  = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         print("[VoiceLayer] Running.")
 
@@ -427,9 +362,6 @@ class VoiceLayer:
         if self._thread:
             self._thread.join(timeout=2.0)
         print("[VoiceLayer] Stopped.")
-
-
-# ── Standalone test ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
@@ -440,12 +372,11 @@ if __name__ == "__main__":
         enroll_person_voice(int(sys.argv[2]), db)
 
     elif len(sys.argv) > 1 and sys.argv[1] == "enroll-folder":
-        # python3 voice_layer.py enroll-folder <person_id> <folder> [--append]
         if len(sys.argv) < 4:
             print("Usage: python3 voice_layer.py enroll-folder "
                   "<person_id> <folder> [--append]")
             sys.exit(1)
-        pid    = int(sys.argv[2])
+        pid = int(sys.argv[2])
         folder = sys.argv[3]
         append = "--append" in sys.argv[4:]
         n = enroll_person_voice_from_folder(pid, db, folder, append=append)
@@ -459,7 +390,7 @@ if __name__ == "__main__":
         get_encoder()
         print("\n[TEST] Recording 4 seconds — speak now...")
         audio = record_audio()
-        emb   = embed_audio(audio)
+        emb = embed_audio(audio)
         if emb is None:
             print("[ERROR] Could not embed audio.")
             sys.exit(1)
@@ -468,7 +399,7 @@ if __name__ == "__main__":
             if vp.ndim == 1:
                 vp = vp[np.newaxis, :]
             best = max(cosine_similarity(emb, e) for e in vp)
-            tag  = "✓ MATCH" if best >= SIMILARITY_THRESHOLD else "✗ no match"
+            tag = "✓ MATCH" if best >= SIMILARITY_THRESHOLD else "✗ no match"
             print(f"  {name:<20} best_similarity={best:.3f}  {tag}")
         print("─────────────────────────────────────────────")
 
