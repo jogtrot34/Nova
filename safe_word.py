@@ -1,32 +1,3 @@
-"""
-safe_word.py
-
-A duress/panic phrase — say it once anywhere in earshot and Nova
-starts watching for it again; say it a second time within 30 seconds
-and it texts your #1 priority emergency contact "something might be
-wrong." One mention alone does nothing except arm the window — that's
-what makes it safe to actually use without constant false alarms, and
-hard to trigger by accident (you'd need to say it twice, on purpose,
-inside 30 seconds).
-
-Runs as its own background thread, completely independent of the
-wake-word/camera pipeline — it's listening continuously, not just
-after "Nova". Needs internet (uses the same Google speech-recognition
-backend fast_responder.py does — swap for an offline STT later if you
-want this offline too; noted as a known limitation, not fixed here
-given the deadline).
-
-Configure the phrase via environment variable so it's never sitting in
-a script anyone can read:
-
-    NOVA_SAFE_WORD="pineapple" python3 main.py
-
-Wired into main.py. Test it standalone first:
-
-    python3 safe_word.py --test          # types instead of listening
-    NOVA_SAFE_WORD=pineapple python3 safe_word.py --listen
-"""
-
 import os
 import threading
 import time
@@ -36,11 +7,10 @@ SAFE_WORD = os.environ.get("NOVA_SAFE_WORD", "pineapple").strip().lower()
 REPEAT_WINDOW_SECONDS = 30
 LISTEN_CLIP_SECONDS = 4
 
-
 class SafeWordListener:
     def __init__(self, notifier=None, ui=None, contacts_db=None):
-        self.notifier = notifier   # optional notifier.Notifier
-        self.ui = ui                # optional NovaWebUI — for orange orb + event log
+        self.notifier = notifier
+        self.ui = ui
         self._contacts_db = contacts_db
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -62,8 +32,6 @@ class SafeWordListener:
     def stop(self):
         self._running = False
 
-    # ── internals ────────────────────────────────────────────────────────
-
     def _heard(self, text: str) -> bool:
         return SAFE_WORD in text.lower()
 
@@ -72,7 +40,7 @@ class SafeWordListener:
             import speech_recognition as sr
         except Exception as e:
             print(f"[SafeWord] speech_recognition not available: {e}")
-            time.sleep(5)   # don't spin-loop if the dependency is missing
+            time.sleep(5)
             return None
         try:
             recognizer = sr.Recognizer()
@@ -81,9 +49,6 @@ class SafeWordListener:
                                           phrase_time_limit=LISTEN_CLIP_SECONDS)
             return recognizer.recognize_google(audio)
         except Exception:
-            # timeouts, "couldn't understand", no internet, mic busy — all
-            # just mean "didn't hear the safe word this round," not a
-            # crash-worthy problem.
             return None
 
     def _trigger_alert(self):
@@ -98,12 +63,9 @@ class SafeWordListener:
                                    "emergency contacts configured", "")
             return
 
-        target   = contacts[0]   # "emergency contact 1" = top priority
-        message  = ("Something might be wrong. This is an automated "
+        target = contacts[0]
+        message = ("Something might be wrong. This is an automated "
                    "safe-word alert from Nova.")
-        # Prefer whatever notifier is live right now — the modem may
-        # have been connected after startup via the Controls panel,
-        # not necessarily passed in when this listener was created.
         notifier = self.notifier or (getattr(self.ui, "_notifier", None) if self.ui else None)
 
         if notifier:
@@ -152,7 +114,6 @@ class SafeWordListener:
                 self._armed_at = None
                 if self.ui:
                     self.ui.set_status("Monitoring...", "idle")
-
 
 if __name__ == "__main__":
     import argparse
