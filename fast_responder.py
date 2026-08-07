@@ -1,48 +1,3 @@
-"""
-fast_responder.py
-
-*** STANDALONE — not imported by main.py or identify.py. ***
-*** Not wired into the running system yet, on purpose.   ***
-
-This is your existing bag-of-words intent-classifier chatbot
-(sourcecode.py / annah.py), cleaned up into one file, with two
-concrete changes:
-
-  1. Speaks through Piper (piper_speak.py) instead of edge_tts +
-     pygame — consistent with the rest of Nova's voice stack, and
-     works fully offline (edge-tts needs internet; Piper doesn't).
-  2. Uses relative paths (intents.json, chatbot_model.pth,
-     dimensions.json — all relative to wherever you run this from)
-     instead of anything hardcoded.
-
-The idea, as I understand it: this is a *fast lane* for small talk /
-simple commands — a tiny model that answers in milliseconds — sitting
-alongside Qwen (brain.py) for anything that actually needs real
-reasoning. voice_layer.py keeps answering "who is speaking"; this
-answers "what did they say, and what's the canned reply." Both would
-run on the same short audio clip, just doing different jobs with it.
-
-WHAT'S HERE:
-    train_and_save()     — trains the intent classifier from
-                            intents.json (you already have real
-                            patterns/responses in there)
-    respond(text)         — text in, response text out (or None if no
-                            intent matched with confidence)
-    listen_and_respond()  — one full loop: mic -> Google STT -> intent
-                            match -> Piper speaks the reply
-
-WHAT THIS DOESN'T DO YET (deliberately, since you said not to wire it
-in): it doesn't listen to Nova's live camera/mic loop, doesn't get
-called from main.py, and doesn't have a way for the web UI to push
-audio to it. See the bottom of this file for how that would plug in
-when you're ready.
-
-Try it once you've trained a model:
-    python3 fast_responder.py --train
-    python3 fast_responder.py --say "hello there"
-    python3 fast_responder.py --listen        # one mic round-trip
-"""
-
 import argparse
 import json
 import os
@@ -54,15 +9,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-INTENTS_PATH    = "intents.json"
-MODEL_PATH      = "chatbot_model.pth"
+INTENTS_PATH = "intents.json"
+MODEL_PATH = "chatbot_model.pth"
 DIMENSIONS_PATH = "dimensions.json"
-
-# Below this, don't trust the match — better to say nothing (and let
-# Qwen or a plain "I didn't catch that" handle it) than to confidently
-# answer the wrong intent.
 CONFIDENCE_FLOOR = 0.55
-
 
 class ChatbotModel(nn.Module):
     def __init__(self, input_size, output_size):
@@ -79,7 +29,6 @@ class ChatbotModel(nn.Module):
         x = self.relu(self.fc2(x))
         x = self.dropout(x)
         return self.fc3(x)
-
 
 class FastResponder:
     def __init__(self, intents_path: str = INTENTS_PATH):
@@ -157,7 +106,7 @@ class FastResponder:
         with open(dimensions_path, "r") as f:
             dims = json.load(f)
         self.vocabulary = dims["vocabulary"]
-        self.intents    = dims["intents"]
+        self.intents = dims["intents"]
 
         with open(self.intents_path, "r") as f:
             data = json.load(f)
@@ -170,9 +119,6 @@ class FastResponder:
         print(f"[FastResponder] Loaded — {len(self.intents)} intent(s).")
 
     def respond(self, text: str):
-        """Returns a response string, or None if nothing matched
-        confidently enough to trust (caller should fall back to Qwen
-        or a generic 'could you repeat that')."""
         if self.model is None:
             raise RuntimeError("Call load() or train_and_save() first.")
 
@@ -181,8 +127,8 @@ class FastResponder:
 
         with torch.no_grad():
             logits = self.model(bag)
-            probs  = torch.softmax(logits, dim=1)[0]
-        best_idx  = int(torch.argmax(probs).item())
+            probs = torch.softmax(logits, dim=1)[0]
+        best_idx = int(torch.argmax(probs).item())
         best_prob = float(probs[best_idx])
 
         if best_prob < CONFIDENCE_FLOOR:
@@ -192,13 +138,7 @@ class FastResponder:
         responses = self.intents_responses.get(tag)
         return random.choice(responses) if responses else None
 
-
-# ── Optional full loop: mic -> STT -> respond -> Piper ────────────────────
-
 def listen_once() -> str | None:
-    """Google's speech_recognition backend — needs internet. Swap for
-    an offline STT (Vosk, whisper.cpp) later if you want this fully
-    offline like the rest of Nova."""
     import speech_recognition as sr
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
@@ -211,7 +151,6 @@ def listen_once() -> str | None:
     except sr.RequestError as e:
         print(f"[FastResponder] STT request failed (no internet?): {e}")
         return None
-
 
 def listen_and_respond(responder: "FastResponder"):
     from piper_speak import speak
@@ -227,7 +166,6 @@ def listen_and_respond(responder: "FastResponder"):
         return
     print(f"Replying: {reply!r}")
     speak(reply)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
